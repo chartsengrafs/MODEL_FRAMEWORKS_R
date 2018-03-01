@@ -1,1 +1,106 @@
 
+ts$DEMAND<-as.numeric(ts$DEMAND)
+#Convert day_date to date
+ts$DAY_DATE2 <- ymd(ts$DAY_DATE)
+ts$LY_DATE<-ymd(ts$LY_DATE)
+
+#Convert to data frame 
+new_ts_d<-as.data.frame(new_ts)
+agg_budg_forecast_df<-as.data.frame(agg_budg_forecast_d)
+
+
+#Join the two datasets 
+
+new_ts_d_2 <-sqldf("SELECT A.* , B.* FROM new_ts as a left join xx
+                 as b on a.DAY_DATE2=B.DATE2")
+
+#Reduce two just the date and demand for univariate modeling
+
+#Convert to TS object
+
+myts_d <- ts(reduced_new_ts_d_2, start = c(2012, 1), frequency = 365)
+
+
+#Initial plotting EDA
+autoplot(myts_d)
+
+gglagplot(myts_d)
+ggAcf(myts_d)
+
+
+# Ljung-Box of stationarity
+Box.test(myts_d, lag = 365, type = "Ljung")
+
+# Ljung-Box of differenced stationarity
+Box.test(diff(myts_d), lag = 365, type = "Ljung")
+
+
+
+# Create three training series omitting the last 1, 2, and 3 years
+train1_d <- window(myts_d, end = c(2017, 01))
+
+#Plot the training dataset
+autoplot(train1_d)
+
+
+
+#################################################################
+#Iterate Prophet models
+
+#################################################################
+
+#Rename date and demand for prophet
+new_ts_d_reduced <- new_ts_d_2 %>%
+  select (ds=DATE2, y=Y) %>%
+  filter(ds < as.Date('2017-01-01'))%>%
+  arrange(ds)
+
+#Iterate through
+
+#1 No parameters changed
+prophets <- prophet(new_ts_d_reduced)
+
+
+#2 Add Monty Carlo simulations
+
+prophets2<-prophet(new_ts_d_reduced, mcmc.samples = 3000)
+
+#3 Add exogeneous regressors
+
+prophets3<- prophet() %>% add_regressor('X') %>% fit.prophet(new_ts_d_reduced)
+
+
+
+#Iterate multiple models through forecasting
+
+future_ds <- new_ts_d_2 %>%
+  select (ds=DATE2, X) %>%
+  filter(ds < as.Date('2018-01-01'))%>%
+  arrange(ds)
+
+
+
+
+forecast_preprep <- function (ahead=365, mod, fut_ds) 
+{
+  future <- make_future_dataframe(mod, periods = ahead)
+  
+  future$X <- fut_ds$X
+  
+  #Predicts the future values 
+  fcst <- predict(mod,future)
+  
+  #Parse dates for joining 
+  fcst$DATE2<-as.character(fcst$ds)
+  fcst$DATE2<-ymd(fcst$DATE2)
+  
+  return(fcst)
+}
+
+f1 <- forecast_preprep(ahead=365, mode=prophets3, fut_ds = future_ds)
+
+#Plot forecasts 
+plot(prophets3, f1)
+
+#Plot the seasonal decomposition
+prophet_plot_components(m1, f1)
