@@ -1,361 +1,198 @@
-splits <- h2o.splitFrame(
 
- hex,           ##  splitting the H2O frame we read above
-
-  c(0.7,0.2),   ##  
-
-
-  seed=1234)    ##  setting a seed will ensure reproducible results (not R's seed)
+#Split the data 
+splits <- h2o.splitFrame(hex, c(0.7,0.2),  seed=1234)    ##  setting a seed will ensure reproducible results (not R's seed)
 
  
 
 train <- h2o.assign(splits[[1]], "train.hex")  
-
-## assign the first result the R variable train
-
-## and the H2O name train.hex
-
 valid <- h2o.assign(splits[[2]], "valid.hex")   ## R valid, H2O valid.hex
-
 test <- h2o.assign(splits[[3]], "test.hex")     ## R test, H2O test.hex seed will ensure reproducible results (not R's seed)
 
  
 
  
-
+#################
 # GBM GRID SEARCH
-
+#################
  
-
 #hyperparamters
+gbm_params1 <- list(learn_rate = c(0.01, 0.1),max_depth = c(3, 5, 9),sample_rate = c(0.8, 1.0),
+               col_sample_rate = c(0.2, 0.5, 1.0))
 
-gbm_params1 <- list(learn_rate = c(0.01, 0.1),
+ #gRID
 
-                    max_depth = c(3, 5, 9),
+gbm_grid1 <- h2o.grid("gbm", x = c(2:23, 26, 28:52), y = 24,grid_id = "gbm_grid1",
+training_frame = train,validation_frame = valid,ntrees = 100,seed = 1,hyper_params = gbm_params1)
 
-                    sample_rate = c(0.8, 1.0),
+ #GBM Grid Performance
 
-                    col_sample_rate = c(0.2, 0.5, 1.0))
-
- 
-
- 
-
-#gRID
-
-gbm_grid1 <- h2o.grid("gbm", x = c(2:23, 26, 28:52), y = 24,
-
-                      grid_id = "gbm_grid1",
-
-                      training_frame = train,
-
-                      validation_frame = valid,
-
-                      ntrees = 100,
-
-                      seed = 1,
-
-                      hyper_params = gbm_params1)
-
- 
-
-#GBM Grid Performance
-
-gbm_gridperf <- h2o.getGrid(grid_id = "gbm_grid1",
-
-                             sort_by = "auc",
-
-                             decreasing = TRUE)
+gbm_gridperf <- h2o.getGrid(grid_id = "gbm_grid1",sort_by = "auc",decreasing = TRUE)
 
 print(gbm_gridperf)
 
+#Score test  set for final eval
+best_gbm_perf <- h2o.performance(model = best_gbm, newdata = test)
+
+
 # Grab the model_id for the top GBM model, chosen by validation AUC
-
 best_gbm_model_id <- gbm_gridperf@model_ids[[1]]
-
 best_gbm <- h2o.getModel(best_gbm_model_id)
 
  
-
- 
-
-#GLM  GRID SEARCH
-
- 
-
-#hyper parameters
-
+#################
+# GLM GRID SEARCH
+#################
+#hyper parameters - regularization 
 glm_hyper_parameters = list(alpha=c(0.01,0.1,0.3,0.5,0.7,0.9),
-
-  lambda= c(1e-4,1e-5,1e-6,1e-7,1e-8) )
-
- 
+lambda= c(1e-4,1e-5,1e-6,1e-7,1e-8) )
 
 glm_grid1 <- h2o.grid("glm", x = c(2:23, 26, 28:52), y = 24, family='binomial',
-
-                      grid_id = "glm_grid1",  training_frame = train,
-
-                      validation_frame = valid,
-
-                      hyper_params = glm_hyper_parameters)
+grid_id = "glm_grid1",  training_frame = train,validation_frame = valid, hyper_params = glm_hyper_parameters)
 
  
+#GLM Grid Performance
 
- 
+glm_gridperf <- h2o.getGrid(grid_id = "glm_grid1",sort_by = "auc",decreasing = TRUE)
 
-#GBM Grid Performance
+#Evaluate on test set
 
-glm_gridperf <- h2o.getGrid(grid_id = "glm_grid1",
+best_glm_perf <- h2o.performance(model = best_glm, newdata = test)
 
-                            sort_by = "auc",
-
-                            decreasing = TRUE)
-
- 
-
-# Now let's evaluate the model performance on a test set
-
-# so we get an honest estimate of top model performance
-
-best_gbm_perf <- h2o.performance(model = best_gbm,
-
-                                 newdata = test)
-
-h2o.auc(best_gbm_perf)
-
- 
-
- 
+h2o.auc(best_glm_perf)
 
 # Grab the model_id for the top GBM model, chosen by validation AUC
-
 best_glm_model_id <- glm_gridperf@model_ids[[1]]
-
 best_glm <- h2o.getModel(best_glm_model_id)
 
  
 
+###########################
+# DEEP LEARNING GRID SEARCH
+##########################
 
  
 # Deeplearning hyperparamters
 
+#Activation function
 activation_opt <- c("Rectifier", "RectifierWithDropout", "TanHWithDropout")
-
+#Regularization parameters
 l1_opt <- c(0, 0.00001, 0.0001, 0.001, 0.01, 0.1)
-
 l2_opt <- c(0, 0.00001, 0.0001, 0.001, 0.01, 0.1)
 
- 
+hyper_params <- list(activation = activation_opt,l1 = l1_opt,l2 = l2_opt)
+
+search_criteria <- list(strategy = "RandomDiscrete",max_runtime_secs = 1200)
 
  
 
-hyper_params <- list(activation = activation_opt,
+ #Grid
 
-                     l1 = l1_opt,
-
-                     l2 = l2_opt)
-
-search_criteria <- list(strategy = "RandomDiscrete",
-
-                        max_runtime_secs = 1200)
+dl_grid <- h2o.grid("deeplearning", x = c(2:23, 26, 28:52), y = 24,grid_id = "dl_grid",
+training_frame = train,validation_frame = valid,seed = 1,hidden = c(200,200),
+hyper_params = hyper_params, search_criteria = search_criteria)
 
  
-
- 
-
- 
-
-dl_grid <- h2o.grid("deeplearning", x = c(2:23, 26, 28:52), y = 24,
-
-                    grid_id = "dl_grid",
-
-                    training_frame = train,
-
-                    validation_frame = valid,
-
-                    seed = 1,
-
-                    hidden = c(10,10),
-
-                    hyper_params = hyper_params,
-
-                    search_criteria = search_criteria)
-
- 
-
-dl_gridperf <- h2o.getGrid(grid_id = "dl_grid",
-
-                           sort_by = "auc",
-
-                           decreasing = TRUE)
+#DL grid performance
+dl_gridperf <- h2o.getGrid(grid_id = "dl_grid",sort_by = "auc", decreasing = TRUE)
 
 print(dl_gridperf)
 
- 
-
- 
-
-# Grab the model_id for the top DL model, chosen by validation AUC
-
+ # Grab the model_id for the top DL model, chosen by validation AUC
 best_dl_model_id <- dl_gridperf@model_ids[[1]]
-
 best_dl <- h2o.getModel(best_dl_model_id)
 
- 
+#Evaluate test set with best dl model 
+best_dl_perf <- h2o.performance(model = best_dl, newdata = test)
 
-# Now let's evaluate the model performance on a test set
-
-# so we get an honest estimate of top model performance
-
-best_dl_perf <- h2o.performance(model = best_dl,
-
-                                newdata = test)
-
-h2o.auc(best_dl_perf)  # 0.6936409
+h2o.auc(best_dl_perf)  
 
  
 
  
 
-#RANDOM FOREST  GRID SEARCH
-hyper_params <- list(ntrees=c(50,100,200),
+############################
+#RANDOM FORREST  GRID SEARCH
+###########################
 
-                     max_depth=c(5,10,15,20))
+hyper_params <- list(ntrees=c(50,100,200),max_depth=c(5,10,15,20))
 
-rf_grid <- h2o.grid("randomForest", x = c(2:23, 26, 28:52), y = 24,
-
-                    grid_id = "rf_grid",
-
-                    training_frame = train,
-
-                    validation_frame = valid,
-
-                    hyper_params=hyper_params)
+rf_grid <- h2o.grid("randomForest", x = c(2:23, 26, 28:52), y = 24,grid_id = "rf_grid",
+training_frame = train, validation_frame = valid,hyper_params=hyper_params)
 
  
 
- 
+ #RFM performance
 
- 
-
-#RFM performance
-
-rf_gridperf <- h2o.getGrid(grid_id = "rf_grid",
-
-                            sort_by = "auc",
-
-                            decreasing = TRUE)
+rf_gridperf <- h2o.getGrid(grid_id = "rf_grid",sort_by = "auc",decreasing = TRUE)
 
 
 # Grab the model_id for the top RFM model, chosen by validation AUC
-
 best_rf_model_id <-rf_gridperf@model_ids[[1]]
-
 best_rf <- h2o.getModel(best_rf_model_id)
 
  
 
- 
- 
+#Evaluate test set with best dl model 
+best_rf_perf <- h2o.performance(model = best_rf, newdata = test)
 
-#******************************* Manual LIFT CURVES OF BEST MODELS
-
- 
+h2o.auc(best_rf_perf)  
 
  
+
+############################
+#MANUAL LIFT CURVES ON TEST
+###########################
+ 
+
+ #to do - functionalize this code, add shiny interactivity
 
 #Convert test hex to data frame from H2O
-
 test_df<-as.data.frame(test)
-
 #add index to test so we can merge the two datasets
-
 test_df$ID <- seq.int(nrow(test_df))
 
  
 
- 
-
 #Score different 'best' models
-
 score.test_rf=h2o.predict(object=best_rf, newdata=test)
-
 score.test_gbm=h2o.predict(object=best_gbm, newdata=test)
-
 score.test_glm=h2o.predict(object=best_glm, newdata=test)
-
 score.test_dl=h2o.predict(object=best_dl, newdata=test)
 
  
-
- 
-
- 
-
 #Convert scored scored hex's to dataframes
-
 scored_df_rf<-as.data.frame(score.test_rf)
-
 scored_df_gbm<-as.data.frame(score.test_gbm)
-
 scored_df_glm<-as.data.frame(score.test_glm)
-
 scored_df_dl<-as.data.frame(score.test_dl)
 
  
-
- 
-
 #add index so we can merge the scored data sets with data
-
 scored_df_rf$ID <- seq.int(nrow(scored_df_rf))
-
 scored_df_gbm$ID <- seq.int(nrow(scored_df_gbm))
-
 scored_df_glm$ID <- seq.int(nrow(scored_df_glm))
-
 scored_df_dl$ID <- seq.int(nrow(scored_df_dl))
 
- 
-
- 
-
- 
-
-#merge them
-
+ #merge them
 full_test_score_rf=inner_join(scored_df_rf,test_df, by="ID" )
-
 full_test_score_gbm=inner_join(scored_df_gbm,test_df, by="ID" )
-
 full_test_score_glm=inner_join(scored_df_glm,test_df, by="ID" )
-
 full_test_score_dl=inner_join(scored_df_dl,test_df, by="ID" )
 
  
 
 #split score up into deciles
-
 fts_rf <- full_test_score_rf %>% mutate(decile=ntile(p0,10))
-
 fts_gbm <- full_test_score_gbm %>% mutate(decile=ntile(p0,10))
-
 fts_glm <- full_test_score_glm %>% mutate(decile=ntile(p0,10))
-
 fts_dl <- full_test_score_dl %>% mutate(decile=ntile(p0,10))
 
  
-
- 
-
-#Convert the resposne back to a 1/0 numeric variable
+#Convert the response back to a 1/0 numeric variable
 
 fts_rf$RESP <- as.numeric(fts_rf$RESP) - 1
-
 fts_gbm$RESP <- as.numeric(fts_gbm$RESP) - 1
-
 fts_glm$RESP <- as.numeric(fts_glm$RESP) - 1
-
 fts_dl$RESP <- as.numeric(fts_dl$RESP) - 1
 
  
@@ -363,170 +200,53 @@ fts_dl$RESP <- as.numeric(fts_dl$RESP) - 1
 #Create cumulative response, base_line
 
 rf <- fts_rf %>% select(decile,RESP) %>% group_by(decile) %>%
+summarise(sresp_rf=sum(RESP)) %>% mutate(cum_resp_rf = cumsum(sresp_rf)) %>%
+mutate(cum_pct_rf = cum_resp_rf/nrow(fts_rf[fts_rf$RESP==1,]))
 
-              summarise(sresp_rf=sum(RESP)) %>%
-
-                    mutate(cum_resp_rf = cumsum(sresp_rf)) %>%
-
-                      mutate(cum_pct_rf = cum_resp_rf/nrow(fts_rf[fts_rf$RESP==1,]))
-
-gbm <- fts_gbm %>% select(decile,RESP) %>% group_by(decile) %>%
-
-  summarise(sresp_gbm=sum(RESP)) %>%
-
-  mutate(cum_resp_gbm = cumsum(sresp_gbm)) %>%
-
-  mutate(cum_pct_gbm = cum_resp_gbm/nrow(fts_gbm[fts_gbm$RESP==1,]))
-
- 
+gbm <- fts_gbm %>% select(decile,RESP) %>% group_by(decile) %>%summarise(sresp_gbm=sum(RESP)) %>%
+mutate(cum_resp_gbm = cumsum(sresp_gbm)) %>%
+mutate(cum_pct_gbm = cum_resp_gbm/nrow(fts_gbm[fts_gbm$RESP==1,]))
 
 glm <- fts_glm %>% select(decile,RESP) %>% group_by(decile) %>%
+summarise(sresp_glm=sum(RESP)) %>% mutate(cum_resp_glm = cumsum(sresp_glm)) %>%
+mutate(cum_pct_glm = cum_resp_glm/nrow(fts_glm[fts_glm$RESP==1,]))
 
-  summarise(sresp_glm=sum(RESP)) %>%
-
-  mutate(cum_resp_glm = cumsum(sresp_glm)) %>%
-
-  mutate(cum_pct_glm = cum_resp_glm/nrow(fts_glm[fts_glm$RESP==1,]))
-
- 
-
- 
-
-dl <- fts_dl %>% select(decile,RESP) %>% group_by(decile) %>%
-
-  summarise(sresp_dl=sum(RESP)) %>%
-
-  mutate(cum_resp_dl = cumsum(sresp_dl)) %>%
-
-  mutate(cum_pct_dl = cum_resp_dl/nrow(fts_glm[fts_dl$RESP==1,]))
-
- 
+dl <- fts_dl %>% select(decile,RESP) %>% group_by(decile) %>%summarise(sresp_dl=sum(RESP)) %>%
+mutate(cum_resp_dl = cumsum(sresp_dl)) %>%mutate(cum_pct_dl = cum_resp_dl/nrow(fts_glm[fts_dl$RESP==1,]))
 
  
 #Merge the rankings
-
 rank1=inner_join(rf,gbm, by="decile" )
-
 rank2=inner_join(rank1,glm, by="decile")
-
 rank3=inner_join(rank2,dl,by="decile")
 
- 
-
- 
-
-View(rank3)
-
- 
-
 #Create cumulative baseline
-
 rank3$base_line = seq(0.1,1,by=0.1)
-
- 
-
- 
-
- 
 
 rank4<- rank3 %>%mutate(separation_rf=cum_pct_rf-base_line,separation_gbm=cum_pct_gbm-base_line ,
 
                         separation_glm=cum_pct_glm-base_line,  separation_dl=cum_pct_dl-base_line)
 
  
-
- 
-
- 
-
 #####################################################
-
- 
-
 #FINAL EVALUATION OF BEST MODELS
-
- 
-
- 
-
 ####################################################
 
- 
-
- 
-
-#Plot your lift curves
-
- 
+#Plot  lift curves
 
 rank4 %>% ggplot(aes(x=decile)) + geom_line(aes(y=cum_pct_rf),color="red") +
+geom_line(aes(y=base_line),color="black")+ geom_line(aes(y=cum_pct_gbm),color="blue") +
+geom_line(aes(y=cum_pct_dl),color="orange") + geom_line(aes(y=cum_pct_glm),color="green")+
+ggtitle("LIFT OVER RANDOM - TESTING SET") + theme_economist()
 
-      geom_line(aes(y=base_line),color="black")+ geom_line(aes(y=cum_pct_gbm),color="blue") +
-
-   geom_line(aes(y=cum_pct_dl),color="orange") + geom_line(aes(y=cum_pct_glm),color="green")+
-
-     ggtitle("LIFT OVER RANDOM - TESTING SET") + theme_economist()
-
- 
+ #Examine max separation (Similar to KS)
 
  
 
-
- 
+summarize(rank4,max_RF_Separation=max(separation_rf),max_GBM_Separation=max(separation_gbm),
+max_GLM_Separation=max(separation_glm),max_DL_Separation=max(separation_dl))  
 
   
-
-#Select your max separation
-
- 
-
-summarize(rank4,max_RF_Separation=max(separation_rf),
-
-          max_GBM_Separation=max(separation_gbm),
-
-          max_GLM_Separation=max(separation_glm),
-
-          max_DL_Separation=max(separation_dl))  
-
-  
-
- 
-
- 
-
- 
-
- 
-
- 
-
-#Score new data with the best chosen model
-
- 
-
- 
-
-#Create table
-
- 
-
- 
-
-# have to specify nzconnect and teh schema I want to write to
-
- 
-
- nzDisconnect()
-
-nzConnect(machine='netezza.rei.com', database='shared_analysis', user='ecase', password=)
-
-nzDisconnect()
-
- 
-
- scored_gbm1<-as.nz.data.frame (scored_df_gbm, "shared_analysis.marketing.ecgbmtest")
-
- 
 
 #This is a good way to count rows with a where statement
 
