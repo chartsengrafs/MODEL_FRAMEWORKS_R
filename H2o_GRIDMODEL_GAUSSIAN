@@ -1,0 +1,149 @@
+
+library(tidyverse)
+library(ggvis)
+library(shiny)
+library(sqldf)
+library(h2o)
+h2o.shutdown(prompt = FALSE)
+h2o.init(max_mem_size="10G", nthreads=3)
+#Read in train & test
+#Define features and target
+
+y=9
+x=c(2:8)
+
+
+# GBM GRID SEARCH
+
+
+
+#hyperparamters
+gbm_params1 <- list(learn_rate = c(0.01, 0.1),max_depth = c(3, 5, 9),sample_rate = c(0.8, 1.0),col_sample_rate = c(0.2, 0.5, 1.0), ntrees=c(100,200))
+#grid
+gbm_grid1 <- h2o.grid("gbm", x = x, y = y,grid_id = "gbm_grid1", training_frame = train, validation_frame = valid, 
+                      seed = 1, hyper_params = gbm_params1)
+                      #GBM Grid Performance
+gbm_gridperf <- h2o.getGrid(grid_id = "gbm_grid1",sort_by = "RMSE")
+
+# Grab the model_id for the top GBM model, chosen by validation RMSE
+best_gbm_model_id <- gbm_gridperf@model_ids[[1]]
+best_gbm <- h2o.getModel(best_gbm_model_id)
+
+#Examine variable importance and best model
+summary(best_gbm)
+h2o.varimp_plot(best_gbm)
+
+#Look at RMSE on the test data set
+best_gbm_perf <- h2o.performance(model = best_gbm, newdata = test)
+
+print(best_gbm_perf) 
+
+
+
+
+
+
+#GLM  GRID SEARCH
+
+#hyper parameters
+
+glm_hyper_parameters = list(alpha=c(0.01,0.1,0.3,0.5,0.7,0.9),
+                            
+                            lambda= c(1e-4,1e-5,1e-6,1e-7,1e-8) )
+
+glm_grid1 <- h2o.grid("glm", x = x, y = y, family='gaussian',grid_id = "glm_grid1",  training_frame = train,
+                      validation_frame = valid, hyper_params = glm_hyper_parameters)
+
+#GLM Grid Performance
+
+glm_gridperf <- h2o.getGrid(grid_id = "glm_grid1", sort_by = "RMSE")
+
+# Grab the model_id for the top GBM model, chosen by validation RMSE
+best_glm_model_id <- glm_gridperf@model_ids[[1]]
+best_glm <- h2o.getModel(best_glm_model_id)
+
+
+#Examine variable importance and best model
+summary(best_glm)
+h2o.varimp_plot(best_glm)
+
+#Apply to test dataset
+best_glm_perf <- h2o.performance(model = best_glm,newdata = test)
+
+
+print(best_glm_perf) 
+
+
+#DEEP LEARNING MODEL
+dl<-h2o.deeplearning(x=x, y=y, training_frame = train, validation_frame =valid, 
+                 input_dropout_ratio = 0.1, loss="Absolute", distribution="gaussian", stopping_metric="RMSE"
+                 , stopping_tolerance=.0001)
+
+
+#Second pass using some of the results - increase epochs
+dl2<-h2o.deeplearning(x=x, y=y, training_frame = train, validation_frame =valid, epochs=20,
+                     input_dropout_ratio = 0.1, loss="Absolute", distribution="gaussian", stopping_metric="RMSE"
+                     , stopping_tolerance=.0001)
+
+
+
+#Second pass using some of the results - decrease epochs, increase number of layers to 3
+
+
+
+dl3<-h2o.deeplearning(x=x, y=y, training_frame = train, validation_frame =valid, hidden = c(200,200,200),
+                      input_dropout_ratio = 0.1, loss="Absolute", distribution="gaussian", stopping_metric="RMSE"
+                      , stopping_tolerance=.0001)
+
+
+#Second pass using some of the results - increase neurons per layer, keep them at 2 layers
+
+dl4<-h2o.deeplearning(x=x, y=y, training_frame = train, validation_frame =valid, hidden = c(300,300),
+                      input_dropout_ratio = 0.1, loss="Absolute", distribution="gaussian", stopping_metric="RMSE"
+                      , stopping_tolerance=.0001)
+                 
+
+#Apply to test dataset
+performance_eval <- function(perf, model, data=test ) {
+  x=h2o.performance()
+  model=model
+  print(perf())
+  
+  
+}
+
+best_dl_perf <- h2o.performance(model = dl,newdata = test)
+perf2 <- h2o.performance(model = dl,newdata = test)
+perf3 <- h2o.performance(model = dl3,newdata = test)
+perf4 <- h2o.performance(model = dl4,newdata = test)
+
+
+print(best_dl_perf) #18.9 - very nice
+print(perf2) #18.9 -still
+print(perf3) #went up
+print(perf4) #still 18.9
+
+
+
+
+#RANDOM FOREST  GRID SEARCH
+hyper_params <- list(ntrees=c(50,100,200),max_depth=c(5,10,15))
+
+rf_grid <- h2o.grid("randomForest", x = x, y =y,grid_id = "rf_grid",
+                    training_frame = train,validation_frame = valid,
+                    distribution="gaussian", stopping_metric="RMSE", 
+                    stopping_tolerance=.001,hyper_params=hyper_params)
+
+#RF performance
+rf_gridperf <- h2o.getGrid(grid_id = "rf_grid",sort_by = "RMSE")
+
+
+#Grab the model_id for the top RF
+
+best_rf_model_id <-rf_gridperf@model_ids[[1]]
+
+best_rf <- h2o.getModel(best_rf_model_id)
+
+best_gbm_perf <- h2o.performance(model = best_rf,newdata = test)
+
+print(best_gbm_perf) 
